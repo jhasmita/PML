@@ -1,0 +1,148 @@
+---
+title: "PML project"
+author: "Smita"
+date: "9/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Summary
+In this project, the goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. Using the training data set, we will first build a prediction model, and use the 20 test cases to test the efficiency of this prediction model.
+The data for this project come from this source: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har
+
+## Download file.
+```{r, echo=FALSE}
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile="pmltrain.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile="pmltest.csv")
+```
+
+## Find out file characteristics, and add NA for all places that don't have a value.
+```{r}
+library(caret)
+library(corrplot)
+A1<-read.csv("pmltrain.csv", header=T, na.strings=c("NA","#DIV/0!",""))
+A2<-read.csv("pmltest.csv", header=T, na.strings=c("NA","#DIV/0!",""))
+dim(A1)
+dim(A2)
+```
+
+## Remove NA values from each table (training and test sets). Transform training data to a cleaner version by removing NAs; removing variables with zero variance to prune the number of variables. 
+```{r}
+A1C <- A1[, colSums(is.na(A1))==0]
+NZV <- nearZeroVar(A1C)
+A2C <- A2[, colSums(is.na(A2)) ==0]
+Qdata<- A2C[, -c(1:5)]
+dim(A1C)
+dim(A2C)
+```
+
+## Partitioning the training data set (70%train and 30% test).This splitting will also help compute the out-of-sample errors.
+```{r}
+Part7030  <- createDataPartition(A1C$classe, p=0.7, list=FALSE)
+TrainSet <- A1C[Part7030, ]
+TestSet  <- A1C[-Part7030, ]
+```
+
+
+```{r}
+TrainSet <- TrainSet[, -NZV]
+TestSet  <- TestSet[, -NZV]
+dim(TrainSet)
+dim(TestSet)
+```
+## Further prune by removing ID variables from the dataset.
+```{r}
+TrainSet <- TrainSet[, -c(1:5)]
+TestSet <- TestSet[, -c(1:5)]
+dim(TrainSet)
+dim(TestSet)
+```
+
+## A general correlation between variables.
+```{r}
+cor_vars <- cor(TrainSet[, -54])
+corrplot(cor_vars, order = "FPC", method = "color", type = "upper", tl.cex = 0.6, tl.col = rgb(0, 0, 0))
+```
+
+Magnet_forearm_Y and accel_forearm_Y; these two variables are highly correlated.Including both these predictors may not be very useful. 
+A weighted combo (PCA analysis)of predictors should capture most information, reduce number of predictors and reduced noise due to averaging.
+
+## Subsetting variables with high positive correlations.
+```{r}
+highcorr<- findCorrelation(cor_vars, cutoff = 0.75)
+highcorr
+names(TrainSet[highcorr])
+```
+# Model building
+For this project, we will use the following algorithms: Decision trees, Random Forest and genrealised boosted regression model (gbm). 
+
+## Predicting with Decision tree.
+```{r}
+library(rpart)
+library(rattle)
+set.seed(2345)
+modFit1<-rpart(classe ~., data=TrainSet, method="class")
+fancyRpartPlot(modFit1)
+```
+## prediction on Test dataset
+```{r}
+library(e1071)
+predictTree <- predict(modFit1, newdata = TestSet, type = "class")
+confTree <- confusionMatrix(predictTree, as.factor(TestSet$classe))
+confTree
+```
+## Plot the matrix results.
+```{r}
+plot(confTree$table, col=confTree$byClass, main=paste("Accuracy =", round(confTree$overall['Accuracy'], 4)))
+```
+## Using ML algorithm, Random Forest for prediction.
+```{r}
+library(randomForest)
+modFit <- train(classe ~., method="rf", data=TrainSet, trControl=trainControl(method='cv'), number=5, allowParallel=TRUE )
+modFit$finalModel
+```
+##Apply the above model fit to the test data set.
+```{r}
+library(e1071)
+predictRF <- predict(modFit, newdata = TestSet)
+confRF <- confusionMatrix(predictRF, as.factor(TestSet$classe))
+confRF
+```
+The accuracy rate using the random forest is very high at .9981. With high accuracy, out of sample error should be minimal but this can also be a case of over-fitting. 
+
+## Plot the RF model
+```{r}
+plot(modFit)
+```
+##Prediction with Generalized Boosted Regression Models
+RF model already looks like a good prediction model, but we will go ahead and try one more ML algorithm.
+```{r}
+library(gbm)
+set.seed(12345)
+ctrlGBM <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+modGBM  <- train(classe ~ ., data=TrainSet, method = "gbm", trControl = ctrlGBM, verbose = FALSE)
+modGBM$finalModel
+```
+```{r}
+predictGBM <- predict(modGBM, newdata=TestSet)
+cmGBM <- confusionMatrix(predictGBM, as.factor (TestSet$classe))
+cmGBM
+```
+Plot the gbm model.
+```{r}
+plot(modGBM)
+```
+
+
+## The accuracy rate of RF model is the highest, compared to the other two models. So, we will use the RF model to test the required/provided cases.
+Note that Test data (Qdata) is minimally processed (removing NAs.
+
+```{r}
+Results <- predict(modFit, newdata=Qdata)
+Results
+```
+This predicted model matches with the course project prediction quiz.
+
